@@ -29,9 +29,24 @@
 		D9B60DDF2D5F697700A6F59B /* LightBoxDesktopUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LightBoxDesktopUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		D92079BE2D5F893500A92E23 /* Exceptions for "LightBoxDesktop" folder in "LightBoxDesktop" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Assets.xcassets,
+				Info.plist,
+				"Preview Content/Preview Assets.xcassets",
+			);
+			target = D9B60DC32D5F697500A6F59B /* LightBoxDesktop */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		D9B60DC62D5F697500A6F59B /* LightBoxDesktop */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D92079BE2D5F893500A92E23 /* Exceptions for "LightBoxDesktop" folder in "LightBoxDesktop" target */,
+			);
 			path = LightBoxDesktop;
 			sourceTree = "<group>";
 		};
@@ -101,7 +116,7 @@
 			buildPhases = (
 				D9B60DC02D5F697500A6F59B /* Sources */,
 				D9B60DC12D5F697500A6F59B /* Frameworks */,
-				D9B60DC22D5F697500A6F59B /* Resources */,
+				D92079BD2D5F893500A92E23 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -208,7 +223,7 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		D9B60DC22D5F697500A6F59B /* Resources */ = {
+		D92079BD2D5F893500A92E23 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -401,6 +416,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LightBoxDesktop/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -428,6 +444,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LightBoxDesktop/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

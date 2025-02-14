@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>LSUIElement</key>
+    <true/>
+    <key>CFBundleIdentifier</key>
+    <string>com.lightbox.desktop</string>
+    <key>CFBundleName</key>
+    <string>LightBox</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>15.2</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>LightBox needs to access your local network to discover and connect to your iPhone camera.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_lightbox._tcp</string>
+    </array>
+    <key>NSCameraUsageDescription</key>
+    <string>LightBox needs access to your camera to create a virtual camera device that can be used in other applications.</string>
+    <key>Privacy - Camera Usage Description</key>
+    <string>LightBox needs access to your camera to create a virtual camera device that can be used in other applications.</string>
+</dict>
+</plist> 

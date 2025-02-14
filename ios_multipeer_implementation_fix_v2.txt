@@ -1,0 +1,356 @@
+# iOS MultipeerConnectivity Implementation Fix - V2
+
+## Current Issues
+1. SSL/DTLS channels not properly establishing before data exchange
+2. Keep-alive messages causing channel errors
+3. Connection state transitions not properly synchronized
+4. Duplicate connection attempts occurring
+
+## Required Changes
+
+### 1. Connection Properties
+```swift
+// MARK: - Private Properties
+private var session: MCSession?
+private var serviceAdvertiser: MCNearbyServiceAdvertiser?
+private var serviceBrowser: MCNearbyServiceBrowser?
+private let peerId: MCPeerID
+private var discoveryInfo: [String: String] {
+    return ["platform": "iOS"]
+}
+private var pendingConnections: Set<String> = []
+private var handshakeTimers: [MCPeerID: Timer] = [:]
+private var keepAliveTimers: [MCPeerID: Timer] = [:]
+private var handshakeCompletedPeers: Set<MCPeerID> = []
+private var lastKeepAliveReceived: [MCPeerID: Date] = [:]
+private var connectionMonitorTimer: Timer?
+private var channelEstablishmentTimers: [MCPeerID: Timer] = [:]
+
+// MARK: - Constants
+private let keepAliveInterval: TimeInterval = 2.0
+private let keepAliveTimeout: TimeInterval = 6.0
+private let handshakeTimeout: TimeInterval = 10.0
+private let channelEstablishmentDelay: TimeInterval = 4.0
+```
+
+### 2. Connection Monitor Implementation
+```swift
+private func startConnectionMonitor() {
+    connectionMonitorTimer?.invalidate()
+    connectionMonitorTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        self?.checkConnections()
+    }
+}
+
+private func checkConnections() {
+    guard let session = session else { return }
+    
+    let now = Date()
+    for peer in session.connectedPeers {
+        if let lastKeepAlive = lastKeepAliveReceived[peer] {
+            let timeSinceLastKeepAlive = now.timeIntervalSince(lastKeepAlive)
+            if timeSinceLastKeepAlive > keepAliveTimeout {
+                print("Keep-alive timeout for peer: \(peer.displayName)")
+                disconnectFromPeer(peer)
+            }
+        }
+    }
+}
+
+private func cleanupTimersForPeer(_ peer: MCPeerID) {
+    // Cleanup all timers
+    handshakeTimers[peer]?.invalidate()
+    handshakeTimers.removeValue(forKey: peer)
+    
+    keepAliveTimers[peer]?.invalidate()
+    keepAliveTimers.removeValue(forKey: peer)
+    
+    channelEstablishmentTimers[peer]?.invalidate()
+    channelEstablishmentTimers.removeValue(forKey: peer)
+}
+```
+
+### 3. Session Delegate Implementation
+```swift
+extension NetworkService: MCSessionDelegate {
+    func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
+        print("Peer \(peerID.displayName) changed state: \(state.rawValue)")
+        
+        DispatchQueue.main.async {
+            switch state {
+            case .connected:
+                print("Peer connected: \(peerID.displayName)")
+                // Prevent duplicate connections
+                if self.pendingConnections.contains(peerID.displayName) {
+                    self.pendingConnections.remove(peerID.displayName)
+                    
+                    // Wait for channels to establish before starting handshake
+                    print("Waiting for channels to establish...")
+                    
+                    // First delay to allow SSL/DTLS setup
+                    DispatchQueue.main.asyncAfter(deadline: .now() + self.channelEstablishmentDelay) {
+                        print("Initial channel establishment delay completed")
+                        
+                        // Second delay to ensure stability
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            print("Starting handshake process")
+                            
+                            // Start handshake timeout timer
+                            let handshakeTimer = Timer.scheduledTimer(withTimeInterval: self.handshakeTimeout, repeats: false) { [weak self] timer in
+                                guard let self = self else { return }
+                                
+                                if !self.handshakeCompletedPeers.contains(peerID) {
+                                    print("Handshake timeout for peer: \(peerID.displayName)")
+                                    self.disconnectFromPeer(peerID)
+                                }
+                            }
+                            self.handshakeTimers[peerID] = handshakeTimer
+                            
+                            // Send handshake with additional delay
+                            self.sendHandshake(to: peerID)
+                        }
+                    }
+                } else {
+                    print("Ignoring duplicate connection from \(peerID.displayName)")
+                    session.disconnect()
+                }
+                
+            case .connecting:
+                print("Peer connecting: \(peerID.displayName)")
+                self.connectionState = .connecting
+                
+            case .notConnected:
+                print("Peer disconnected: \(peerID.displayName)")
+                // Clean up all state for this peer
+                self.cleanupTimersForPeer(peerID)
+                self.handshakeCompletedPeers.remove(peerID)
+                self.pendingConnections.remove(peerID.displayName)
+                self.lastKeepAliveReceived.removeValue(forKey: peerID)
+                
+                DispatchQueue.main.async {
+                    if session.connectedPeers.isEmpty {
+                        self.isConnected = false
+                        self.connectionState = .disconnected
+                    }
+                }
+                
+            @unknown default:
+                break
+            }
+        }
+    }
+    
+    func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let type = json["type"] as? String {
+            print("Received data from \(peerID.displayName): \(json)")
+            
+            // Update last keep-alive timestamp for any message received
+            lastKeepAliveReceived[peerID] = Date()
+            
+            switch type {
+            case "handshake":
+                handleHandshake(json, from: peerID)
+            case "handshake_response":
+                handleHandshakeResponse(json, from: peerID)
+            case "keep_alive":
+                // Keep-alive received, connection is still active
+                if handshakeCompletedPeers.contains(peerID) {
+                    // Send keep-alive response
+                    let response: [String: Any] = [
+                        "type": "keep_alive",
+                        "timestamp": Date().timeIntervalSince1970,
+                        "deviceId": UIDevice.current.name
+                    ]
+                    
+                    if let data = try? JSONSerialization.data(withJSONObject: response) {
+                        try? session.send(data, toPeers: [peerID], with: .reliable)
+                    }
+                }
+            default:
+                print("Unknown message type: \(type)")
+            }
+        }
+    }
+}
+```
+
+### 4. Handshake Management
+```swift
+private func sendHandshake(to peerID: MCPeerID) {
+    print("Preparing to send handshake...")
+    
+    // Additional delay before sending first data
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        let handshake: [String: Any] = [
+            "type": "handshake",
+            "deviceId": UIDevice.current.name,
+            "platform": "iOS"
+        ]
+        
+        if let data = try? JSONSerialization.data(withJSONObject: handshake) {
+            do {
+                print("Sending handshake...")
+                try self.session?.send(data, toPeers: [peerID], with: .reliable)
+                print("Sent handshake to \(peerID.displayName)")
+            } catch {
+                print("Failed to send handshake: \(error)")
+                self.disconnectFromPeer(peerID)
+            }
+        }
+    }
+}
+
+private func handleHandshakeResponse(_ json: [String: Any], from peerID: MCPeerID) {
+    guard let status = json["status"] as? String,
+          status == "accepted" else {
+        print("Handshake rejected")
+        return
+    }
+    
+    print("Handshake accepted, waiting for channel stabilization...")
+    
+    // Wait longer before updating state to allow channels to fully establish
+    DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+        print("Channel stabilization delay completed")
+        // Mark handshake as completed
+        self.handshakeCompletedPeers.insert(peerID)
+        self.lastKeepAliveReceived[peerID] = Date()
+        
+        // Wait even longer before starting keep-alive
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            print("Starting keep-alive exchange")
+            self.isConnected = true
+            self.connectionState = .connected
+            
+            // Additional delay before starting keep-alive
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                // Start keep-alive timer
+                self.startKeepAliveTimer(for: peerID)
+            }
+        }
+    }
+}
+```
+
+### 5. Keep-Alive Timer
+```swift
+private func startKeepAliveTimer(for peerID: MCPeerID) {
+    // Cancel existing timer if any
+    keepAliveTimers[peerID]?.invalidate()
+    
+    // Create new timer with a random offset to prevent synchronization
+    let randomOffset = Double.random(in: 1.0...2.0)
+    let timer = Timer.scheduledTimer(withTimeInterval: keepAliveInterval + randomOffset, repeats: true) { [weak self] timer in
+        guard let self = self,
+              let session = self.session,
+              session.connectedPeers.contains(peerID),
+              self.handshakeCompletedPeers.contains(peerID) else {
+            timer.invalidate()
+            self?.keepAliveTimers.removeValue(forKey: peerID)
+            return
+        }
+        
+        // Add a small delay before sending keep-alive
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let keepAlive: [String: Any] = [
+                "type": "keep_alive",
+                "timestamp": Date().timeIntervalSince1970,
+                "deviceId": UIDevice.current.name
+            ]
+            
+            if let data = try? JSONSerialization.data(withJSONObject: keepAlive) {
+                do {
+                    try session.send(data, toPeers: [peerID], with: .reliable)
+                } catch {
+                    print("Failed to send keep-alive: \(error)")
+                    timer.invalidate()
+                    self.keepAliveTimers.removeValue(forKey: peerID)
+                    self.disconnectFromPeer(peerID)
+                }
+            }
+        }
+    }
+    
+    keepAliveTimers[peerID] = timer
+}
+```
+
+### 6. Connection State Management
+```swift
+private func disconnectFromPeer(_ peerID: MCPeerID) {
+    print("Disconnecting from peer: \(peerID.displayName)")
+    
+    // Clean up all state for this peer
+    cleanupTimersForPeer(peerID)
+    handshakeCompletedPeers.remove(peerID)
+    pendingConnections.remove(peerID.displayName)
+    lastKeepAliveReceived.removeValue(forKey: peerID)
+    
+    // Disconnect session
+    session?.disconnect()
+    
+    DispatchQueue.main.async {
+        self.isConnected = false
+        self.connectionState = .disconnected
+    }
+}
+
+private func handleConnectionError(_ error: Error) {
+    print("Connection error: \(error)")
+    
+    // Clean up all state
+    session?.disconnect()
+    cleanupAllState()
+    
+    DispatchQueue.main.async {
+        self.isConnected = false
+        self.connectionState = .failed(error)
+    }
+}
+
+private func cleanupAllState() {
+    // Clean up all timers
+    for (peer, timer) in handshakeTimers {
+        timer.invalidate()
+        handshakeTimers.removeValue(forKey: peer)
+    }
+    
+    for (peer, timer) in keepAliveTimers {
+        timer.invalidate()
+        keepAliveTimers.removeValue(forKey: peer)
+    }
+    
+    // Clean up all state
+    pendingConnections.removeAll()
+    handshakeCompletedPeers.removeAll()
+    lastKeepAliveReceived.removeAll()
+}
+```
+
+## Critical Changes
+1. Added better connection state management
+2. Improved error handling and cleanup
+3. Added more detailed logging
+4. Increased all timing intervals
+5. Better synchronization between peers
+6. More robust cleanup on disconnection
+
+## Connection Sequence
+1. Initial connection (MCSessionState.connected)
+2. Wait 4 seconds for SSL/DTLS setup
+3. Wait 2 seconds for channel stabilization
+4. Send handshake with 1-second delay
+5. Wait 4 seconds after handshake response
+6. Wait 3 seconds before marking as connected
+7. Wait 2 seconds before starting keep-alive
+8. Begin keep-alive exchange with 2-second interval
+
+The key improvements in this version:
+1. Better handling of connection state transitions
+2. More robust cleanup on disconnection
+3. Improved error handling
+4. Better synchronization between peers
+5. More detailed logging for debugging
+
+Let us know if you need any clarification. 

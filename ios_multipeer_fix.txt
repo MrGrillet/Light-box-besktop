@@ -1,0 +1,168 @@
+# iOS MultipeerConnectivity Implementation Fix
+
+We're seeing connection issues where the iOS app isn't maintaining the connection after the initial handshake. Here's what needs to be fixed:
+
+## Current Behavior
+1. iOS app discovers Mac
+2. Connection established
+3. Handshake sent
+4. Handshake response received
+5. Connection drops (channel errors)
+
+## Required Changes
+
+### 1. Connection State Management
+```swift
+class NetworkService: NSObject, ObservableObject {
+    @Published private(set) var connectionState: ConnectionState = .disconnected
+    @Published private(set) var isConnected = false
+    private var isHandshakeComplete = false
+    
+    // Keep strong references
+    private let session: MCSession
+    private let serviceAdvertiser: MCNearbyServiceAdvertiser
+    private let serviceBrowser: MCNearbyServiceBrowser
+    
+    override init() {
+        // Initialize with strong references
+        let peerId = MCPeerID(displayName: UIDevice.current.name)
+        session = MCSession(peer: peerId, securityIdentity: nil, encryptionPreference: .required)
+        serviceAdvertiser = MCNearbyServiceAdvertiser(
+            peer: peerId,
+            discoveryInfo: ["platform": "iOS"],
+            serviceType: "lightbox-app"
+        )
+        serviceBrowser = MCNearbyServiceBrowser(peer: peerId, serviceType: "lightbox-app")
+        
+        super.init()
+        
+        session.delegate = self
+        serviceAdvertiser.delegate = self
+        serviceBrowser.delegate = self
+        
+        startServices()
+    }
+}
+```
+
+### 2. Improved Session Delegate
+```swift
+extension NetworkService: MCSessionDelegate {
+    func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
+        DispatchQueue.main.async {
+            switch state {
+            case .connected:
+                print("Connected to peer: \(peerID.displayName)")
+                if !self.isHandshakeComplete {
+                    self.sendHandshake()
+                }
+                
+            case .connecting:
+                print("Connecting to peer: \(peerID.displayName)")
+                self.connectionState = .connecting
+                
+            case .notConnected:
+                print("Disconnected from peer: \(peerID.displayName)")
+                self.isHandshakeComplete = false
+                self.connectionState = .disconnected
+                self.isConnected = false
+                
+            @unknown default:
+                break
+            }
+        }
+    }
+    
+    func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String else {
+            return
+        }
+        
+        switch type {
+        case "handshake_response":
+            handleHandshakeResponse(json)
+        default:
+            print("Received message of type: \(type)")
+        }
+    }
+}
+```
+
+### 3. Handshake Management
+```swift
+extension NetworkService {
+    private func sendHandshake() {
+        let handshake: [String: Any] = [
+            "type": "handshake",
+            "deviceId": UIDevice.current.name,
+            "platform": "iOS"
+        ]
+        
+        send(handshake)
+    }
+    
+    private func handleHandshakeResponse(_ json: [String: Any]) {
+        guard let status = json["status"] as? String,
+              status == "accepted" else {
+            print("Handshake rejected")
+            return
+        }
+        
+        DispatchQueue.main.async {
+            self.isHandshakeComplete = true
+            self.isConnected = true
+            self.connectionState = .connected
+        }
+    }
+    
+    private func send(_ message: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else {
+            return
+        }
+        
+        do {
+            try session.send(data, toPeers: session.connectedPeers, with: .reliable)
+        } catch {
+            print("Failed to send message: \(error)")
+        }
+    }
+}
+```
+
+### 4. Service Management
+```swift
+extension NetworkService {
+    private func startServices() {
+        serviceAdvertiser.startAdvertisingPeer()
+        serviceBrowser.startBrowsingForPeers()
+    }
+    
+    func disconnect() {
+        isHandshakeComplete = false
+        session.disconnect()
+        serviceAdvertiser.stopAdvertisingPeer()
+        serviceBrowser.stopBrowsingForPeers()
+    }
+}
+```
+
+## Critical Changes
+1. Use strong references for MCSession and services
+2. Track handshake completion state
+3. Only update connection state after handshake
+4. Maintain connection after handshake
+5. Proper cleanup on disconnect
+
+## Testing Steps
+1. Delete app from device
+2. Clean build folder
+3. Build and run
+4. Verify connection sequence:
+   - Discovery
+   - Connection
+   - Handshake
+   - Handshake response
+   - Maintained connection
+
+The connection should remain stable after these changes. Let us know if you need any clarification. 

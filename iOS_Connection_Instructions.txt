@@ -1,0 +1,480 @@
+# iOS App Connection Instructions for LightBox
+
+## Critical Connection Rules
+1. NEVER initiate a new connection while one is in progress
+2. NEVER browse for peers while handling DTLS
+3. STOP advertising while handling a connection
+4. WAIT for connection sequence to complete before resuming discovery
+5. AUTOMATICALLY transition to dtlsEstablishment when connected
+
+## Service Configuration
+Service Type: "lightbox-app"
+Discovery Info: 
+{
+    "platform": "iOS",
+    "role": "client"
+}
+
+## Connection Protocol Sequence
+1. Start advertising and browsing with service type "lightbox-app"
+2. When receiving invitation:
+   - STOP browsing
+   - STOP advertising
+   - Accept invitation
+   - Set state to connecting
+3. When connection established:
+   - Set state to dtlsEstablishment
+   - DO NOT initiate any new connections
+   - Wait for DTLS test
+4. When DTLS test received:
+   - Send acknowledgment ONLY
+   - DO NOT initiate any new connections
+   - DO NOT resume browsing/advertising
+   - Maintain connection for AT LEAST 3 seconds
+5. After DTLS establishment:
+   - Wait for handshake request
+   - Send handshake response
+   - Begin keep-alive exchange
+6. Only resume advertising/browsing after:
+   - Explicit disconnection
+   - Keep-alive timeout
+   - Handshake timeout
+
+## Critical DTLS Handling
+1. When receiving DTLS test message:
+   - STOP all peer discovery
+   - Send ONLY the acknowledgment
+   - DO NOT send any other messages
+   - DO NOT initiate new connections
+   - Keep existing connection OPEN
+   - Wait for handshake request
+   
+2. DTLS Test Message (received from macOS):
+{
+    "type": "dtls_test",
+    "from": "macOS"
+}
+
+3. DTLS Acknowledgment (iOS MUST respond with):
+{
+    "type": "dtls_ack",
+    "from": "iOS"
+}
+
+4. DTLS Timing:
+   - Must respond within 1 second
+   - Must maintain connection for 3 seconds
+   - Must not send any other messages
+   - Must not initiate new connections
+
+## Connection State Management
+enum ConnectionState {
+    case disconnected          // Initial state, can browse/advertise
+    case connecting           // Received/accepting invitation
+    case dtlsEstablishment    // Connected, handling DTLS
+    case dtlsEstablished      // DTLS complete, waiting for handshake
+    case handshaking          // Processing handshake
+    case connected            // Fully connected, exchanging keep-alive
+    case failed(Error)        // Connection failed, wait before retry
+}
+
+## State Transition Rules
+1. disconnected → connecting:
+   - Stop browsing/advertising
+   - Accept invitation
+   - Wait for connection
+
+2. connecting → dtlsEstablishment:
+   - Connection established
+   - Wait for DTLS test
+   - Do not initiate connections
+
+3. dtlsEstablishment → dtlsEstablished:
+   - DTLS test received and acknowledged
+   - Maintain connection
+   - Wait for handshake
+
+4. dtlsEstablished → handshaking:
+   - Handshake request received
+   - Send response
+   - Wait for completion
+
+5. handshaking → connected:
+   - Handshake complete
+   - Start keep-alive
+   - Normal operation
+
+6. Any state → failed:
+   - Clean up resources
+   - Wait 5 seconds
+   - Return to disconnected
+   - Resume browsing/advertising
+
+## Implementation Requirements
+1. MUST track connection state accurately
+2. MUST stop discovery during connection
+3. MUST maintain single connection
+4. MUST NOT initiate connections while connected
+5. MUST wait for timeouts before retrying
+6. MUST clean up properly on disconnection
+
+## Message Handling Rules
+1. DTLS Test:
+   - Accept ONLY in dtlsEstablishment state
+   - Send ONLY acknowledgment
+   - Maintain connection
+
+2. Handshake Request:
+   - Accept ONLY in dtlsEstablished state
+   - Send response
+   - Wait for completion
+
+3. Keep-Alive:
+   - Exchange ONLY in connected state
+   - Track timestamps
+   - Monitor for timeout
+
+## Error Recovery
+1. If connection fails:
+   - Set state to failed
+   - Clean up all resources
+   - Wait 5 seconds
+   - Return to disconnected
+   - Resume discovery
+
+2. If DTLS fails:
+   - Do not attempt reconnection
+   - Wait for macOS to retry
+   - Clean up on timeout
+
+## Debugging
+1. Log ALL state transitions with timestamps
+2. Log peer discovery events
+3. Log connection attempts
+4. Log DTLS handling
+5. Log handshake process
+6. Log keep-alive timing
+7. Log cleanup actions
+
+## Common Failure Points to Fix
+1. Initiating connections during DTLS
+2. Not stopping discovery during connection
+3. Not maintaining connection after DTLS
+4. Sending messages at wrong times
+5. Premature connection cleanup
+6. Race conditions in state transitions
+
+## Message Formats
+
+### Handshake Messages
+struct HandshakeMessage: Codable {
+    let type: HandshakeMessageType
+    let deviceId: String
+    let platform: String
+}
+
+// When receiving handshake request from macOS:
+// - type will be .request
+// - deviceId will be "MacDesktop"
+// - platform will be "macOS"
+
+// When sending handshake response:
+// - type should be .response
+// - deviceId should be your iOS device ID
+// - platform should be "iOS"
+
+### Keep-Alive Message Format (both sending and receiving)
+{
+    "type": "keep_alive",
+    "timestamp": Double, // current timestamp
+    "deviceId": String  // your device ID
+}
+
+## Timing Constants
+keepAliveInterval: TimeInterval = 2.0
+keepAliveTimeout: TimeInterval = 6.0
+handshakeTimeout: TimeInterval = 15.0
+channelEstablishmentDelay: TimeInterval = 2.0
+channelStabilizationDelay: TimeInterval = 1.0
+handshakeResponseDelay: TimeInterval = 0.5
+dtlsRetryDelay: TimeInterval = 1.0
+
+## Connection Maintenance
+1. DO NOT disconnect during:
+   - DTLS test message handling (2s window)
+   - Channel establishment period (2s)
+   - Channel stabilization period (1s)
+   - Handshake response period (0.5s)
+   
+2. Only disconnect if:
+   - Explicitly told to by the app
+   - No keep-alive received for 6 seconds
+   - Handshake not completed within 15 seconds
+
+## Error Handling
+1. If DTLS/SSL errors occur, wait for macOS to retry
+2. If no keep-alive received within 6 seconds, consider connection lost
+3. If handshake not completed within 15 seconds, reset connection
+4. Clean up all timers and state when disconnected
+
+## Expected Behavior
+1. iOS app should wait for macOS to initiate all steps
+2. Respond promptly to all messages from macOS
+3. Maintain keep-alive exchange once connection is established
+4. Handle disconnections gracefully and clean up state
+5. Be prepared to receive and respond to DTLS test messages at any time
+6. Track connection state and update UI accordingly
+
+## Important Implementation Notes
+1. Always verify peer is still connected before sending messages
+2. Use .reliable mode for all message sending
+3. Keep track of handshake completion state
+4. Maintain only one active connection at a time
+5. Clean up resources when connection is lost
+
+## Connection State Property
+```swift
+@Published private(set) var connectionState: ConnectionState = .disconnected {
+    didSet {
+        print("State transition: \(oldValue) -> \(connectionState)")
+        handleStateTransition(from: oldValue, to: connectionState)
+    }
+}
+```
+
+## State Transition Handler
+```swift
+private func handleStateTransition(from oldState: ConnectionState, to newState: ConnectionState) {
+    print("\n=== State Transition ===")
+    print("From: \(oldState)")
+    print("To: \(newState)")
+    
+    // Always ensure discovery is stopped during any active connection state
+    if newState != .disconnected {
+        stopDiscovery()
+        print("Stopped discovery for \(newState)")
+    }
+    
+    switch (oldState, newState) {
+    case (_, .connecting):
+        // Initial connection setup
+        cleanupTimers()
+        
+    case (_, .dtlsEstablishment):
+        // Prepare for DTLS test
+        cleanupTimers()
+        startDTLSTimeout()
+        
+    case (_, .dtlsEstablished):
+        // Wait for handshake
+        cleanupTimers()
+        startHandshakeTimeout()
+        
+    case (_, .handshaking):
+        // Process handshake
+        cleanupTimers()
+        startHandshakeTimeout()
+        
+    case (_, .connected):
+        // Start normal operation
+        cleanupTimers()
+        startKeepAliveTimer()
+        
+    case (_, .failed(let error)):
+        print("Connection failed: \(error.localizedDescription)")
+        cleanupConnection()
+        // Wait before resuming discovery
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            if self.connectionState == .failed {
+                self.connectionState = .disconnected
+            }
+        }
+        
+    case (_, .disconnected):
+        cleanupConnection()
+        // Resume discovery
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if self.connectionState == .disconnected {
+                self.startDiscovery()
+            }
+        }
+    }
+}
+
+private func cleanupTimers() {
+    dtlsTimer?.invalidate()
+    handshakeTimer?.invalidate()
+    keepAliveTimer?.invalidate()
+    dtlsTimer = nil
+    handshakeTimer = nil
+    keepAliveTimer = nil
+}
+
+private func startDTLSTimeout() {
+    dtlsTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+        if self?.connectionState == .dtlsEstablishment {
+            self?.connectionState = .failed(NSError(domain: "DTLS timeout", code: 0))
+        }
+    }
+}
+```
+
+## MCSessionDelegate Implementation
+```swift
+func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
+    DispatchQueue.main.async {
+        switch state {
+        case .connecting:
+            self.connectionState = .connecting
+            
+        case .connected:
+            // IMPORTANT: Automatically transition to DTLS establishment
+            self.connectionState = .dtlsEstablishment
+            
+        case .notConnected:
+            self.connectionState = .failed(NSError(domain: "Disconnected", code: 0))
+            
+        @unknown default:
+            break
+        }
+    }
+}
+```
+
+## DTLS Message Handler
+```swift
+func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
+    print("\n=== Message Received ===")
+    print("Current state: \(connectionState)")
+    
+    // First try to decode as HandshakeMessage
+    if let handshakeMessage = try? JSONDecoder().decode(HandshakeMessage.self, from: data) {
+        print("Decoded handshake message: \(handshakeMessage.type)")
+        handleHandshakeMessage(handshakeMessage, from: peerID)
+        return
+    }
+    
+    // Then try as JSON for other message types
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let type = json["type"] as? String else {
+        print("Failed to parse message")
+        return
+    }
+    
+    print("Processing message type: \(type)")
+    
+    switch type {
+    case "dtls_test":
+        handleDTLSTest(from: peerID)
+        
+    case "keep_alive":
+        if connectionState == .connected {
+            handleKeepAlive(from: peerID)
+        } else {
+            print("Ignoring keep-alive in state: \(connectionState)")
+        }
+        
+    default:
+        print("Unknown message type: \(type)")
+    }
+}
+
+private func handleHandshakeMessage(_ message: HandshakeMessage, from peerID: MCPeerID) {
+    print("\n=== Handling Handshake Message ===")
+    print("Type: \(message.type)")
+    print("Current state: \(connectionState)")
+    
+    switch (message.type, connectionState) {
+    case (.request, .dtlsEstablished):
+        print("Received handshake request in correct state")
+        sendHandshakeResponse(to: peerID)
+        
+    case (.request, _):
+        print("Ignoring handshake request in wrong state: \(connectionState)")
+        
+    case (.response, .handshaking):
+        print("Received handshake response")
+        connectionState = .connected
+        
+    default:
+        print("Unexpected handshake message type in state: \(connectionState)")
+    }
+}
+
+private func sendHandshakeResponse(to peerID: MCPeerID) {
+    print("\n=== Sending Handshake Response ===")
+    
+    let response = HandshakeMessage(
+        type: .response,
+        deviceId: UIDevice.current.name,
+        platform: "iOS"
+    )
+    
+    if let responseData = try? JSONEncoder().encode(response) {
+        do {
+            // Set state to handshaking before sending response
+            connectionState = .handshaking
+            
+            try session?.send(responseData, toPeers: [peerID], with: .reliable)
+            print("Sent handshake response")
+            
+            // Start a timer to monitor handshake completion
+            startHandshakeCompletionTimer()
+        } catch {
+            print("Failed to send handshake response: \(error)")
+            connectionState = .failed(error)
+        }
+    }
+}
+
+private func handleDTLSTest(from peerID: MCPeerID) {
+    print("\n=== Handling DTLS Test ===")
+    print("Current state: \(connectionState)")
+    
+    // Always handle DTLS test, regardless of state
+    stopDiscovery() // Ensure discovery is stopped
+    
+    // Send acknowledgment immediately
+    let response: [String: String] = [
+        "type": "dtls_ack",
+        "from": "iOS"
+    ]
+    
+    if let responseData = try? JSONSerialization.data(withJSONObject: response) {
+        do {
+            try session?.send(responseData, toPeers: [peerID], with: .reliable)
+            print("Sent DTLS acknowledgment")
+            
+            // Set state to dtlsEstablishment if not already
+            if connectionState != .dtlsEstablishment {
+                connectionState = .dtlsEstablishment
+            }
+            
+            // Wait for channel establishment
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                if self.connectionState == .dtlsEstablishment {
+                    print("DTLS channel established, transitioning to dtlsEstablished")
+                    self.connectionState = .dtlsEstablished
+                }
+            }
+        } catch {
+            print("Failed to send DTLS acknowledgment: \(error)")
+            connectionState = .failed(error)
+        }
+    }
+}
+
+private func startHandshakeCompletionTimer() {
+    handshakeTimer?.invalidate()
+    handshakeTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+        guard let self = self else { return }
+        
+        if self.connectionState == .handshaking {
+            print("Handshake completion timeout")
+            self.connectionState = .failed(NSError(domain: "Handshake timeout", code: 0))
+        }
+    }
+}
+
+## Connection Maintenance
+```
