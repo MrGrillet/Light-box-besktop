@@ -8,6 +8,7 @@ struct VideoFrameMessage: Codable {
     let type: String
     let data: String  // Base64 encoded image data
     let timestamp: TimeInterval
+    let orientation: Int  // Device orientation (1-8, matching UIImage.Orientation)
 }
 
 enum HandshakeMessageType: String, Codable {
@@ -985,14 +986,55 @@ public class NetworkService: NSObject, ObservableObject {
     private func handleVideoFrame(_ json: [String: Any]) {
         guard let base64String = json["data"] as? String,
               let imageData = Data(base64Encoded: base64String),
-              let image = NSImage(data: imageData) else {
+              let originalImage = NSImage(data: imageData) else {
             print("Failed to decode video frame")
             return
         }
         
+        // Create a new rotated image
+        let rotatedImage = createRotatedImage(originalImage)
+        
         DispatchQueue.main.async {
-            self.currentFrame = image
+            self.currentFrame = rotatedImage
         }
+    }
+    
+    private func createRotatedImage(_ image: NSImage) -> NSImage {
+        let imageSize = image.size
+        let rotation = ConnectionManager.shared.currentRotation
+        
+        // If no rotation, return original image
+        if rotation == 0 {
+            return image
+        }
+        
+        // Calculate new size if needed (swap width/height for 90/270 degrees)
+        let newSize: NSSize
+        if rotation == 90 || rotation == 270 {
+            newSize = NSSize(width: imageSize.height, height: imageSize.width)
+        } else {
+            newSize = imageSize
+        }
+        
+        // Create new image with rotated dimensions
+        let newImage = NSImage(size: newSize)
+        newImage.lockFocus()
+        
+        // Move to center and rotate
+        let transform = NSAffineTransform()
+        transform.translateX(by: newSize.width/2, yBy: newSize.height/2)
+        transform.rotate(byDegrees: CGFloat(rotation))
+        transform.translateX(by: -imageSize.width/2, yBy: -imageSize.height/2)
+        transform.concat()
+        
+        // Draw original image
+        image.draw(in: NSRect(origin: .zero, size: imageSize),
+                  from: NSRect(origin: .zero, size: imageSize),
+                  operation: .copy,
+                  fraction: 1.0)
+        
+        newImage.unlockFocus()
+        return newImage
     }
 }
 

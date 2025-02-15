@@ -12,7 +12,7 @@ import Network
 
 @main
 struct LightBoxDesktopApp: App {
-    @StateObject private var connectionManager = ConnectionManager()
+    @StateObject private var connectionManager = ConnectionManager.shared
     
     var body: some Scene {
         MenuBarExtra("LightBox", systemImage: connectionManager.isConnected ? "video.fill" : "video") {
@@ -29,6 +29,8 @@ struct LightBoxDesktopApp: App {
 
 // MARK: - Connection Manager
 class ConnectionManager: ObservableObject {
+    static let shared = ConnectionManager()
+    
     @Published var isConnected = false
     @Published var flashlightOn = false
     @Published var currentQuality: StreamQuality = .medium
@@ -38,6 +40,7 @@ class ConnectionManager: ObservableObject {
     @Published var connectionState: NetworkConnectionState = .disconnected
     @Published var isVirtualCameraInstalled = false
     @Published var previewSession: AVCaptureSession?
+    @Published var currentRotation: Int = 0 // 0, 90, 180, 270 degrees
     
     let networkService = NetworkService()
     var selectedDevice: ConnectedDevice?
@@ -133,8 +136,14 @@ class ConnectionManager: ObservableObject {
         
         DispatchQueue.main.async {
             if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-                let image = CIImage(cvPixelBuffer: pixelBuffer)
-                previewLayer.contents = image
+                let originalImage = CIImage(cvPixelBuffer: pixelBuffer)
+                
+                // Apply rotation transform
+                let rotatedImage = originalImage.transformed(by: CGAffineTransform(translationX: originalImage.extent.width/2, y: originalImage.extent.height/2)
+                    .rotated(by: CGFloat(self.currentRotation) * .pi / 180)
+                    .translatedBy(x: -originalImage.extent.width/2, y: -originalImage.extent.height/2))
+                
+                previewLayer.contents = rotatedImage
             }
         }
     }
@@ -363,6 +372,32 @@ class ConnectionManager: ObservableObject {
         )
         
         if let data = try? JSONEncoder().encode(handshake) {
+            networkService.sendData(data, to: device)
+        }
+    }
+    
+    func rotateCamera() {
+        // Rotate 90 degrees clockwise
+        currentRotation = (currentRotation + 90) % 360
+        print("Rotating camera view to \(currentRotation) degrees")
+    }
+    
+    func setFlashIntensity(_ intensity: Double) {
+        print("\n=== Setting Flash Intensity ===")
+        guard isConnected, let device = selectedDevice else {
+            print("Cannot set flash intensity: no active connection")
+            return
+        }
+        
+        let command: [String: Any] = [
+            "type": "command",
+            "command": "set_flash_intensity",
+            "intensity": intensity
+        ]
+        
+        print("Sending flash intensity command: \(intensity)")
+        
+        if let data = try? JSONSerialization.data(withJSONObject: command) {
             networkService.sendData(data, to: device)
         }
     }

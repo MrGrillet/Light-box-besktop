@@ -3,6 +3,7 @@ import SwiftUI
 struct MenuBarView: View {
     @EnvironmentObject private var connectionManager: ConnectionManager
     @State private var isPreviewWindowShown = false
+    @State private var flashIntensity: Double = 1.0
     
     var body: some View {
         VStack(spacing: 12) {
@@ -18,22 +19,46 @@ struct MenuBarView: View {
             Divider()
             
             if connectionManager.isConnected {
-                // Flashlight Control
-                Button(action: { connectionManager.toggleFlashlight() }) {
-                    HStack {
-                        Image(systemName: connectionManager.flashlightOn ? "flashlight.on.fill" : "flashlight.off.fill")
-                        Text(connectionManager.flashlightOn ? "Turn Off Flashlight" : "Turn On Flashlight")
-                        Spacer()
+                // Camera Controls
+                Group {
+                    // Flashlight Control
+                    VStack(spacing: 8) {
+                        Button(action: { connectionManager.toggleFlashlight() }) {
+                            HStack {
+                                Image(systemName: connectionManager.flashlightOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                                Text(connectionManager.flashlightOn ? "Turn Off Flashlight" : "Turn On Flashlight")
+                                Spacer()
+                            }
+                        }
+                        
+                        if connectionManager.flashlightOn {
+                            HStack {
+                                Text("Intensity")
+                                Slider(value: $flashIntensity, in: 0.0...1.0) { changed in
+                                    if !changed {
+                                        connectionManager.setFlashIntensity(flashIntensity)
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-                .padding(.horizontal)
-                
-                // Camera Preview
-                Button(action: { openPreviewWindow() }) {
-                    HStack {
-                        Image(systemName: "camera.fill")
-                        Text("Camera Preview")
-                        Spacer()
+                    
+                    // Rotation Control
+                    Button(action: { connectionManager.rotateCamera() }) {
+                        HStack {
+                            Image(systemName: "rotate.right")
+                            Text("Rotate Camera")
+                            Spacer()
+                        }
+                    }
+                    
+                    // Camera Preview
+                    Button(action: { openPreviewWindow() }) {
+                        HStack {
+                            Image(systemName: "camera.fill")
+                            Text("Camera Preview")
+                            Spacer()
+                        }
                     }
                 }
                 .padding(.horizontal)

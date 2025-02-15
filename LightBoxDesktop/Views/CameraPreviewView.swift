@@ -7,9 +7,13 @@ class VideoPreviewView: NSView {
     override init(frame: NSRect) {
         imageView = NSImageView(frame: frame)
         imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageAlignment = .alignCenter
         
         super.init(frame: frame)
         addSubview(imageView)
+        
+        // Add autoresizing mask to maintain proper sizing
+        imageView.autoresizingMask = [.width, .height]
     }
     
     required init?(coder: NSCoder) {
@@ -18,11 +22,33 @@ class VideoPreviewView: NSView {
     
     override func layout() {
         super.layout()
-        imageView.frame = bounds
+        
+        // Adjust frame based on rotation
+        let rotation = ConnectionManager.shared.currentRotation
+        if rotation == 90 || rotation == 270 {
+            // For 90/270 degree rotations, swap width and height while maintaining aspect ratio
+            let aspectRatio = bounds.width / bounds.height
+            let newWidth = bounds.height
+            let newHeight = bounds.width
+            
+            if aspectRatio > 1 {
+                imageView.frame = NSRect(
+                    x: (bounds.width - newWidth) / 2,
+                    y: (bounds.height - newHeight) / 2,
+                    width: newWidth,
+                    height: newHeight
+                )
+            } else {
+                imageView.frame = bounds
+            }
+        } else {
+            imageView.frame = bounds
+        }
     }
     
     func updateImage(_ image: NSImage?) {
         imageView.image = image
+        needsLayout = true
     }
 }
 
@@ -49,8 +75,15 @@ struct CameraPreviewView: View {
                 VideoPreviewRepresentable(networkService: connectionManager.networkService)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 
-                Button("Stop Preview") {
-                    stopPreview()
+                HStack {
+                    Button("Stop Preview") {
+                        stopPreview()
+                    }
+                    
+                    Button(action: { connectionManager.rotateCamera() }) {
+                        Image(systemName: "rotate.right")
+                        Text("Rotate")
+                    }
                 }
                 .padding(.bottom)
             } else {
