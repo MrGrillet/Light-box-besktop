@@ -1,6 +1,44 @@
 import SwiftUI
 import AVFoundation
 
+class VideoPreviewView: NSView {
+    private var imageView: NSImageView
+    
+    override init(frame: NSRect) {
+        imageView = NSImageView(frame: frame)
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        
+        super.init(frame: frame)
+        addSubview(imageView)
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func layout() {
+        super.layout()
+        imageView.frame = bounds
+    }
+    
+    func updateImage(_ image: NSImage?) {
+        imageView.image = image
+    }
+}
+
+struct VideoPreviewRepresentable: NSViewRepresentable {
+    @ObservedObject var networkService: NetworkService
+    
+    func makeNSView(context: Context) -> VideoPreviewView {
+        let view = VideoPreviewView(frame: .zero)
+        return view
+    }
+    
+    func updateNSView(_ nsView: VideoPreviewView, context: Context) {
+        nsView.updateImage(networkService.currentFrame)
+    }
+}
+
 struct CameraPreviewView: View {
     @EnvironmentObject private var connectionManager: ConnectionManager
     @State private var isPreviewActive = false
@@ -8,7 +46,7 @@ struct CameraPreviewView: View {
     var body: some View {
         VStack(spacing: 16) {
             if isPreviewActive {
-                PreviewRepresentable(connectionManager: connectionManager)
+                VideoPreviewRepresentable(networkService: connectionManager.networkService)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 
                 Button("Stop Preview") {
@@ -65,28 +103,5 @@ struct CameraPreviewView: View {
             connectionManager.networkService.sendData(data, to: device)
             isPreviewActive = false
         }
-    }
-}
-
-// SwiftUI wrapper for AVCaptureVideoPreviewLayer
-struct PreviewRepresentable: NSViewRepresentable {
-    let connectionManager: ConnectionManager
-    
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        
-        let previewLayer = AVCaptureVideoPreviewLayer()
-        previewLayer.videoGravity = .resizeAspectFill
-        previewLayer.frame = view.bounds
-        
-        view.layer = previewLayer
-        connectionManager.setPreviewLayer(previewLayer)
-        
-        return view
-    }
-    
-    func updateNSView(_ nsView: NSView, context: Context) {
-        nsView.layer?.frame = nsView.bounds
     }
 } 

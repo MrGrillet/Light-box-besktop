@@ -4,6 +4,12 @@ import AppKit
 import CoreMedia
 
 // MARK: - Types
+struct VideoFrameMessage: Codable {
+    let type: String
+    let data: String  // Base64 encoded image data
+    let timestamp: TimeInterval
+}
+
 enum HandshakeMessageType: String, Codable {
     case request
     case response
@@ -33,6 +39,7 @@ public class NetworkService: NSObject, ObservableObject {
     @Published public var connectionState: NetworkConnectionState = .disconnected
     @Published public var isListening = false
     @Published public var connectedDevices: [ConnectedDevice] = []
+    @Published public var currentFrame: NSImage?
     
     // MARK: - Private Properties
     private var session: MCSession?
@@ -831,12 +838,6 @@ public class NetworkService: NSObject, ObservableObject {
     }
     
     // Update session delegate method to handle video streams
-    public func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {
-        if streamName == "video" {
-            handleVideoStream(stream)
-        }
-    }
-    
     private func handleVideoStream(_ stream: InputStream) {
         stream.open()
         
@@ -868,10 +869,67 @@ public class NetworkService: NSObject, ObservableObject {
     }
     
     private func createSampleBuffer(from buffer: UnsafeMutablePointer<UInt8>, length: Int) -> CMSampleBuffer? {
-        // Create CMSampleBuffer from raw video data
-        // Implementation depends on your video format
-        // This is a placeholder - you'll need to implement the actual conversion
-        return nil
+        // Create pixel buffer
+        var pixelBuffer: CVPixelBuffer?
+        let width = 1280 // These should match the iOS camera output
+        let height = 720
+        
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            nil,
+            &pixelBuffer
+        )
+        
+        guard status == kCVReturnSuccess, let pixelBuffer = pixelBuffer else {
+            return nil
+        }
+        
+        // Lock the pixel buffer
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        
+        // Copy data into pixel buffer
+        let pixelData = CVPixelBufferGetBaseAddress(pixelBuffer)
+        memcpy(pixelData, buffer, length)
+        
+        // Unlock the pixel buffer
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+        
+        // Create video format description
+        var formatDescription: CMFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescriptionOut: &formatDescription
+        )
+        
+        guard let formatDescription = formatDescription else {
+            return nil
+        }
+        
+        // Create timing info
+        var timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 30), // 30 fps
+            presentationTimeStamp: CMTime.zero,
+            decodeTimeStamp: CMTime.invalid
+        )
+        
+        // Create sample buffer
+        var sampleBuffer: CMSampleBuffer?
+        CMSampleBufferCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            dataReady: true,
+            makeDataReadyCallback: nil,
+            refcon: nil,
+            formatDescription: formatDescription,
+            sampleTiming: &timing,
+            sampleBufferOut: &sampleBuffer
+        )
+        
+        return sampleBuffer
     }
     
     private func handleCommand(_ command: String, parameters: [String: Any], from peerID: MCPeerID) {
@@ -921,6 +979,19 @@ public class NetworkService: NSObject, ObservableObject {
         
         if let responseData = try? JSONSerialization.data(withJSONObject: response) {
             try? session?.send(responseData, toPeers: [peerID], with: .reliable)
+        }
+    }
+    
+    private func handleVideoFrame(_ json: [String: Any]) {
+        guard let base64String = json["data"] as? String,
+              let imageData = Data(base64Encoded: base64String),
+              let image = NSImage(data: imageData) else {
+            print("Failed to decode video frame")
+            return
+        }
+        
+        DispatchQueue.main.async {
+            self.currentFrame = image
         }
     }
 }
@@ -1001,9 +1072,18 @@ extension NetworkService: MCSessionDelegate {
                     handleCommand(command, parameters: json, from: peerID)
                 }
                 
+            case "video_frame":
+                handleVideoFrame(json)
+                
             default:
                 print("Unknown message type: \(type)")
             }
+        }
+    }
+    
+    public func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {
+        if streamName == "video" {
+            handleVideoStream(stream)
         }
     }
     
