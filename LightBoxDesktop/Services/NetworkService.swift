@@ -196,7 +196,7 @@ public class NetworkService: NSObject, ObservableObject {
         
         DispatchQueue.main.async {
             self.connectedDevices.removeAll()
-            self.connectionState = .disconnected
+            self.connectionState = NetworkConnectionState.disconnected
         }
         
         print("Connection state reset complete")
@@ -314,7 +314,7 @@ public class NetworkService: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.connectedDevices.removeAll(where: { $0.id == deviceId })
             if session.connectedPeers.isEmpty {
-                self.connectionState = .disconnected
+                self.connectionState = NetworkConnectionState.disconnected
             }
         }
         
@@ -348,7 +348,7 @@ public class NetworkService: NSObject, ObservableObject {
         
         // Trust the MCSession's built-in security
         // If we got here, the peer is already authenticated by MC framework
-        connectionState = .connected
+        connectionState = NetworkConnectionState.connected
         
         // Create device with the peer's actual display name
         let device = ConnectedDevice(
@@ -367,7 +367,7 @@ public class NetworkService: NSObject, ObservableObject {
         // Start keep-alive exchange
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self,
-                  self.connectionState == .connected,
+                  self.connectionState == NetworkConnectionState.connected,
                   session.connectedPeers.contains(peer) else {
                 return
             }
@@ -470,7 +470,7 @@ public class NetworkService: NSObject, ObservableObject {
                                 self.connectedDevices.append(device)
                                 
                                 print("Added authenticated device: \(handshakeMessage.deviceId)")
-                                self.connectionState = .connected
+                                self.connectionState = NetworkConnectionState.connected
                             }
                             
                             // Start keep-alive after successful handshake
@@ -500,7 +500,7 @@ public class NetworkService: NSObject, ObservableObject {
         // Verify connection state
         guard let session = self.session,
               session.connectedPeers.contains(peerID),
-              connectionState == .connected else {
+              connectionState == NetworkConnectionState.connected else {
             print("Cannot start keep-alive: peer not connected")
             return
         }
@@ -513,7 +513,7 @@ public class NetworkService: NSObject, ObservableObject {
             guard let self = self,
                   let session = self.session,
                   session.connectedPeers.contains(peerID),
-                  self.connectionState == .connected else {
+                  self.connectionState == NetworkConnectionState.connected else {
                 timer.invalidate()
                 self?.keepAliveTimers.removeValue(forKey: peerID)
                 return
@@ -549,7 +549,7 @@ public class NetworkService: NSObject, ObservableObject {
         connectedDevices.removeAll { $0.id == peerID.displayName }
         
         // Update connection state
-        connectionState = .disconnected
+        connectionState = NetworkConnectionState.disconnected
         
         // Attempt to restart services
         print("Restarting Multipeer services...")
@@ -739,7 +739,7 @@ public class NetworkService: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.connectedDevices.removeAll(where: { $0.id == peerID.displayName })
             if self.session?.connectedPeers.isEmpty == true {
-                self.connectionState = .disconnected
+                self.connectionState = NetworkConnectionState.disconnected
             }
         }
         
@@ -1053,7 +1053,7 @@ extension NetworkService: MCSessionDelegate {
                 print("Peer connected: \(peerID.displayName)")
                 
                 // Trust MCSession's built-in security
-                self.connectionState = .connected
+                self.connectionState = NetworkConnectionState.connected
                 
                 // Add to handshake completed peers immediately
                 self.handshakeCompletedPeers.insert(peerID)
@@ -1077,7 +1077,7 @@ extension NetworkService: MCSessionDelegate {
                 
             case .connecting:
                 print("Peer connecting: \(peerID.displayName)")
-                self.connectionState = .connecting
+                self.connectionState = NetworkConnectionState.connecting
                 
             case .notConnected:
                 print("Peer disconnected: \(peerID.displayName)")
@@ -1091,7 +1091,7 @@ extension NetworkService: MCSessionDelegate {
                 DispatchQueue.main.async {
                     self.connectedDevices.removeAll { $0.id == peerID.displayName }
                     if self.session?.connectedPeers.isEmpty == true {
-                        self.connectionState = .disconnected
+                        self.connectionState = NetworkConnectionState.disconnected
                     }
                 }
                 
@@ -1221,7 +1221,7 @@ extension NetworkService: MCNearbyServiceBrowserDelegate {
             self.pendingConnections.remove(peerID.displayName)
             self.connectedDevices.removeAll(where: { $0.id == peerID.displayName })
             if self.session?.connectedPeers.isEmpty == true {
-                self.connectionState = .disconnected
+                self.connectionState = NetworkConnectionState.disconnected
             }
         }
     }

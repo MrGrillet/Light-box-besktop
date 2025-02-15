@@ -21,7 +21,9 @@ let package = Package(
     targets: [
         .target(
             name: "LightBoxDesktop",
-            dependencies: ["WebRTC"]),
+            dependencies: ["WebRTC"],
+            path: "LightBoxDesktop",
+            exclude: ["NetworkTypes/Sources"]),
         .testTarget(
             name: "LightBoxDesktopTests",
             dependencies: ["LightBoxDesktop"]),
