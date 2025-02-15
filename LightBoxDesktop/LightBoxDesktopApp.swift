@@ -37,9 +37,10 @@ class ConnectionManager: ObservableObject {
     @Published var discoveredDevices: [ConnectedDevice] = []
     @Published var connectionState: NetworkConnectionState = .disconnected
     @Published var isVirtualCameraInstalled = false
+    @Published var previewSession: AVCaptureSession?
     
-    private let networkService = NetworkService()
-    private var selectedDevice: ConnectedDevice?
+    let networkService = NetworkService()
+    var selectedDevice: ConnectedDevice?
     private var videoOutput: AVCaptureVideoDataOutput?
     private var virtualCameraProcess: Process?
     private var cancellables = Set<AnyCancellable>()
@@ -47,6 +48,7 @@ class ConnectionManager: ObservableObject {
     // Add video processing properties
     private var videoDataOutput: AVCaptureVideoDataOutput?
     private var videoQueue = DispatchQueue(label: "com.lightbox.videoqueue")
+    private var previewLayer: AVCaptureVideoPreviewLayer?
     
     init() {
         setupServices()
@@ -113,7 +115,6 @@ class ConnectionManager: ObservableObject {
                         self.selectedDevice = self.connectedDevices[0]
                         print("Selected device updated to: \(self.connectedDevices[0].id)")
                     }
-                    self.startVideoStream()
                 } else if self.networkService.connectionState == .disconnected {
                     self.selectedDevice = nil
                     print("Selected device cleared due to disconnection")
@@ -127,27 +128,19 @@ class ConnectionManager: ObservableObject {
         }
     }
     
-    private func startVideoStream() {
-        guard connectionState == .connected, let device = selectedDevice else { return }
+    private func handleVideoData(_ sampleBuffer: CMSampleBuffer) {
+        guard let previewLayer = previewLayer else { return }
         
-        // Request video stream from iOS device
-        let request: [String: Any] = [
-            "type": "command",
-            "command": "start_video",
-            "quality": currentQuality.rawValue
-        ]
-        
-        if let data = try? JSONSerialization.data(withJSONObject: request) {
-            networkService.sendData(data, to: device)
+        DispatchQueue.main.async {
+            if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+                let image = CIImage(cvPixelBuffer: pixelBuffer)
+                previewLayer.contents = image
+            }
         }
     }
     
-    private func handleVideoData(_ sampleBuffer: CMSampleBuffer) {
-        // Process video data and send to virtual camera
-        guard isVirtualCameraInstalled else { return }
-        
-        // Convert sample buffer to video frame and send to virtual camera
-        // Implementation depends on your virtual camera interface
+    func setPreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
+        self.previewLayer = layer
     }
     
     func disconnect() {
