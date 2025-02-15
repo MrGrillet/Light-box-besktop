@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# Unload any existing instances of the plugin
+if [ -d "$INSTALL_LOCATION/LightBoxCamera.plugin" ]; then
+    /usr/bin/pluginkit -r "$INSTALL_LOCATION/LightBoxCamera.plugin"
+    /bin/rm -rf "$INSTALL_LOCATION/LightBoxCamera.plugin"
+fi
+
+# Stop the VDC Assistant to ensure clean installation
+/usr/bin/killall VDCAssistant 2>/dev/null || true
+
+exit 0 

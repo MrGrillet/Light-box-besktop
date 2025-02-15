@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>LightBox Virtual Camera</title>
+    <organization>com.lightbox</organization>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true" hostArchitectures="x86_64,arm64"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="11.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <system-authentication required="true" />
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <license file="license.html" mime-type="text/html"/>
+    <pkg-ref id="com.lightbox.camera"
+             version="1.0"
+             auth="root">LightBoxCamera-component.pkg</pkg-ref>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.lightbox.camera"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.lightbox.camera" visible="false">
+        <pkg-ref id="com.lightbox.camera"/>
+    </choice>
+</installer-gui-script> 

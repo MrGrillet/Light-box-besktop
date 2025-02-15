@@ -804,14 +804,27 @@ public class NetworkService: NSObject, ObservableObject {
     
     // Add method to send data to a specific device
     public func sendData(_ data: Data, to device: ConnectedDevice) {
+        print("\n=== Attempting to Send Data ===")
+        print("Target device: \(device.id)")
+        print("Session exists: \(session != nil)")
+        if let session = session {
+            print("Connected peers: \(session.connectedPeers.map { $0.displayName })")
+        }
+        print("Connection state: \(connectionState)")
+        print("Connected peers: \(session?.connectedPeers.map { $0.displayName } ?? [])")
+        print("Handshake completed peers: \(handshakeCompletedPeers.map { $0.displayName })")
+        
         guard let session = session,
               let peer = session.connectedPeers.first(where: { $0.displayName == device.id }) else {
-            print("Cannot send data: peer not found")
+            print("Failed to send data: peer not found or session invalid")
+            print("Session exists: \(session != nil)")
+            print("Peer found: \(session?.connectedPeers.first(where: { $0.displayName == device.id }) != nil)")
             return
         }
         
         do {
             try session.send(data, toPeers: [peer], with: .reliable)
+            print("Data sent successfully to peer: \(peer.displayName)")
         } catch {
             print("Failed to send data: \(error)")
         }
@@ -917,6 +930,9 @@ extension NetworkService: MCSessionDelegate {
     public func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         print("\n=== Connection State Change ===")
         print("macOS: Peer \(peerID.displayName) state changed to: \(state.rawValue)")
+        print("Previous connection state: \(connectionState)")
+        print("Handshake completed: \(handshakeCompletedPeers.contains(peerID))")
+        print("Keep-alive active: \(keepAliveTimers[peerID] != nil)")
         
         DispatchQueue.main.async {
             switch state {
@@ -940,6 +956,7 @@ extension NetworkService: MCSessionDelegate {
                 // Update device list
                 self.connectedDevices.removeAll { $0.id == device.id }
                 self.connectedDevices.append(device)
+                print("Updated connected devices: \(self.connectedDevices)")
                 
                 // Start keep-alive immediately
                 self.lastKeepAliveReceived[peerID] = Date()
@@ -1006,21 +1023,27 @@ extension NetworkService: MCNearbyServiceAdvertiserDelegate {
         print("Peer details:")
         print("- Display name: \(peerID.displayName)")
         
-        // Accept all iOS invitations
+        // Accept iOS invitations with proper platform info
         if let context = context,
-           let info = try? JSONSerialization.jsonObject(with: context) as? [String: String],
-           info["platform"] == "iOS" {
-            print("Accepting invitation from iOS device: \(peerID.displayName)")
+           let info = try? JSONSerialization.jsonObject(with: context) as? [String: String] {
+            print("Received context info: \(info)")
             
-            // Clean up any existing state
-            cleanupTimersForPeer(peerID)
-            handshakeCompletedPeers.remove(peerID)
-            lastKeepAliveReceived.removeValue(forKey: peerID)
-            pendingConnections.removeAll()
-            
-            invitationHandler(true, session)
+            if info["platform"] == "iOS" {
+                print("Accepting invitation from iOS device: \(peerID.displayName)")
+                
+                // Clean up any existing state
+                cleanupTimersForPeer(peerID)
+                handshakeCompletedPeers.remove(peerID)
+                lastKeepAliveReceived.removeValue(forKey: peerID)
+                pendingConnections.removeAll()
+                
+                invitationHandler(true, session)
+            } else {
+                print("Rejecting invitation: incorrect platform (\(info["platform"] ?? "unknown"))")
+                invitationHandler(false, nil)
+            }
         } else {
-            print("Rejecting non-iOS invitation")
+            print("Rejecting invitation: missing or invalid context data")
             invitationHandler(false, nil)
         }
     }
@@ -1052,7 +1075,13 @@ extension NetworkService: MCNearbyServiceBrowserDelegate {
             lastKeepAliveReceived.removeValue(forKey: peerID)
             pendingConnections.removeAll()
             
-            browser.invitePeer(peerID, to: session!, withContext: nil, timeout: 30)
+            // Include platform info in invitation context
+            let contextInfo = ["platform": "macOS"]
+            if let contextData = try? JSONSerialization.data(withJSONObject: contextInfo) {
+                browser.invitePeer(peerID, to: session!, withContext: contextData, timeout: 30)
+            } else {
+                print("Failed to create invitation context")
+            }
         } else {
             print("Ignoring non-iOS device")
         }

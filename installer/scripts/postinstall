@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# Set proper permissions for the plugin
+/bin/chmod -R 755 "$INSTALL_LOCATION/LightBoxCamera.plugin"
+/usr/sbin/chown -R root:wheel "$INSTALL_LOCATION/LightBoxCamera.plugin"
+
+# Register the plugin with the system
+/usr/bin/pluginkit -a "$INSTALL_LOCATION/LightBoxCamera.plugin"
+
+# Notify the system about the new camera
+/usr/bin/killall VDCAssistant 2>/dev/null || true
+
+exit 0 
